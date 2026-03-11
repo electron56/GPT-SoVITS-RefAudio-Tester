@@ -112,6 +112,9 @@ UI_TEXTS = {
         "status_failed_sovits": "加载 SoVITS 失败：{error}",
         "status_loaded_gpt": "已加载 GPT：{name}",
         "status_failed_gpt": "加载 GPT 失败：{error}",
+        "status_auto_switched_sovits": "已加载 GPT：{gpt}，并自动切换 SoVITS：{sovits}",
+        "status_auto_switch_sovits_failed": "已加载 GPT：{gpt}，自动切换 SoVITS 失败：{error}",
+        "status_no_paired_sovits": "已加载 GPT：{gpt}，未找到同名 SoVITS。",
         "no_model_found": "未找到模型。请将 .pth 放入 SoVITS_weights*，并将 .ckpt 放入 GPT_weights*。",
         "lang_zh": "中文",
         "lang_ja": "日本語",
@@ -162,6 +165,9 @@ UI_TEXTS = {
         "status_failed_sovits": "SoVITS の読み込みに失敗: {error}",
         "status_loaded_gpt": "GPT を読み込みました: {name}",
         "status_failed_gpt": "GPT の読み込みに失敗: {error}",
+        "status_auto_switched_sovits": "GPT を読み込み、同名 SoVITS へ自動切替: GPT={gpt}, SoVITS={sovits}",
+        "status_auto_switch_sovits_failed": "GPT は読み込み済みですが、SoVITS 自動切替に失敗: {error}",
+        "status_no_paired_sovits": "GPT を読み込みましたが、同名 SoVITS が見つかりません: {gpt}",
         "no_model_found": "モデルが見つかりません。.pth を SoVITS_weights* に、.ckpt を GPT_weights* に配置してください。",
         "lang_zh": "中文",
         "lang_ja": "日本語",
@@ -212,6 +218,9 @@ UI_TEXTS = {
         "status_failed_sovits": "Failed to load SoVITS: {error}",
         "status_loaded_gpt": "Loaded GPT: {name}",
         "status_failed_gpt": "Failed to load GPT: {error}",
+        "status_auto_switched_sovits": "Loaded GPT: {gpt}, auto-switched SoVITS: {sovits}",
+        "status_auto_switch_sovits_failed": "Loaded GPT: {gpt}, but failed to auto-switch SoVITS: {error}",
+        "status_no_paired_sovits": "Loaded GPT: {gpt}, no same-name SoVITS found.",
         "no_model_found": "No model found. Put .pth files into SoVITS_weights* and .ckpt files into GPT_weights*.",
         "lang_zh": "中文",
         "lang_ja": "日本語",
@@ -226,6 +235,7 @@ UI_TEXTS = {
 }
 
 UI_LANGUAGE_OPTIONS = [("中文", "zh"), ("日本語", "ja"), ("English", "en")]
+ROOT_PAIR_MAP = {gpt_root: sovits_root for gpt_root, sovits_root in zip(GPT_WEIGHT_ROOTS, SOVITS_WEIGHT_ROOTS)}
 
 SYNTH_LANGUAGE_LABELS = {
     "Chinese": {"zh": "中文", "ja": "中国語", "en": "Chinese"},
@@ -523,13 +533,90 @@ def on_change_sovits_weights(sovits_path: str, current_text_language: str):
         )
 
 
-def on_change_gpt_weights(gpt_path: str):
+def _find_paired_sovits_path(gpt_path: str) -> Optional[str]:
+    if not gpt_path:
+        return None
+
+    gpt_root = os.path.normpath(gpt_path).split(os.sep)[0]
+    preferred_roots: List[str] = []
+    paired_root = ROOT_PAIR_MAP.get(gpt_root)
+    if paired_root:
+        preferred_roots.append(paired_root)
+
+    for root in SOVITS_WEIGHT_ROOTS:
+        if root not in preferred_roots:
+            preferred_roots.append(root)
+
+    stem = os.path.splitext(os.path.basename(gpt_path))[0]
+    for root in preferred_roots:
+        candidate = f"{root}/{stem}.pth"
+        if candidate in g_SoVITS_names:
+            return candidate
+    return None
+
+
+def on_change_gpt_weights(gpt_path: str, current_sovits_path: str, current_text_language: str):
     try:
         inference_main.change_gpt_weights(gpt_path)
-        return t("status_loaded_gpt", name=os.path.basename(gpt_path))
     except Exception as exc:
         print(exc)
-        return t("status_failed_gpt", error=exc)
+        version = inference_main.get_current_model_version()
+        language_update = _build_language_update(current_text_language)
+        version_text, sample_steps_update, super_sampling_update = _build_version_updates(version)
+        return (
+            {"__type__": "update"},
+            language_update,
+            version_text,
+            sample_steps_update,
+            super_sampling_update,
+            t("status_failed_gpt", error=exc),
+        )
+
+    gpt_name = os.path.basename(gpt_path)
+    paired_sovits = _find_paired_sovits_path(gpt_path)
+    if paired_sovits and paired_sovits != current_sovits_path:
+        try:
+            version = inference_main.change_sovits_weights(paired_sovits)
+            language_update = _build_language_update(current_text_language)
+            version_text, sample_steps_update, super_sampling_update = _build_version_updates(version)
+            return (
+                {"__type__": "update", "value": paired_sovits},
+                language_update,
+                version_text,
+                sample_steps_update,
+                super_sampling_update,
+                t(
+                    "status_auto_switched_sovits",
+                    gpt=gpt_name,
+                    sovits=os.path.basename(paired_sovits),
+                ),
+            )
+        except Exception as exc:
+            print(exc)
+            version = inference_main.get_current_model_version()
+            language_update = _build_language_update(current_text_language)
+            version_text, sample_steps_update, super_sampling_update = _build_version_updates(version)
+            return (
+                {"__type__": "update"},
+                language_update,
+                version_text,
+                sample_steps_update,
+                super_sampling_update,
+                t("status_auto_switch_sovits_failed", gpt=gpt_name, error=exc),
+            )
+
+    version = inference_main.get_current_model_version()
+    language_update = _build_language_update(current_text_language)
+    version_text, sample_steps_update, super_sampling_update = _build_version_updates(version)
+    status_key = "status_loaded_gpt" if paired_sovits else "status_no_paired_sovits"
+    return (
+        {"__type__": "update"},
+        language_update,
+        version_text,
+        sample_steps_update,
+        super_sampling_update,
+        t(status_key, name=gpt_name, gpt=gpt_name),
+    )
 
 
 def generate_test_audio(
@@ -858,8 +945,15 @@ if __name__ == "__main__":
 
             dropdownGPT.change(
                 on_change_gpt_weights,
-                inputs=[dropdownGPT],
-                outputs=[textboxStatus],
+                inputs=[dropdownGPT, dropdownSoVITS, dropdownTextLanguage],
+                outputs=[
+                    dropdownSoVITS,
+                    dropdownTextLanguage,
+                    textboxModelVersion,
+                    sliderSampleSteps,
+                    checkboxSuperSampling,
+                    textboxStatus,
+                ],
             )
 
             dropdownUILanguage.change(
