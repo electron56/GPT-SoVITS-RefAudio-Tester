@@ -4,7 +4,8 @@ scipy
 tensorboard
 librosa==0.10.2
 numba
-pytorch-lightning>=2.4
+torch
+pytorch_lightning>=2.4
 gradio<5
 ffmpeg-python
 onnxruntime; platform_machine == "aarch64" or platform_machine == "arm64"
@@ -25,7 +26,7 @@ PyYAML
 psutil
 jieba_fast
 jieba
-split-lang
+split_lang
 fast_langdetect>=0.3.1
 wordsegment
 rotary_embedding_torch
@@ -41,3 +42,4 @@ pydantic<=2.10.6
 ctranslate2>=4.0,<5
 av>=11
 tqdm
+matplotlib

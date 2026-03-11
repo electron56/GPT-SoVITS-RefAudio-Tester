@@ -1,34 +1,36 @@
-﻿# GPT-SoVITS RefAudio Tester (v1-v4 Compatible)
+﻿# GPT-SoVITS RefAudio Tester（兼容 v1-v4）
 
-This repository keeps a batch preview WebUI workflow for reference-audio testing, and now uses the latest GPT-SoVITS inference core (`TTS_infer_pack`) for model compatibility.
+[English Version](README_EN.md)
 
-## What is upgraded
+本仓库保留了用于参考音频测试的批量预览 WebUI 工作流，并已切换到最新的 GPT-SoVITS 推理核心（`TTS_infer_pack`），以提升模型兼容性。
 
-- Inference core migrated from legacy direct model calls to the upstream `TTS` pipeline.
-- Compatible with SoVITS/GPT model families:
+## 更新内容
+
+- 推理核心已从旧版直接调用模型迁移到上游 `TTS` 管线。
+- 兼容以下 SoVITS / GPT 模型系列：
   - `v1`
   - `v2`
   - `v2Pro`
   - `v2ProPlus`
   - `v3`
   - `v4`
-- Batch preview flow is preserved:
-  - paged list loading
-  - generate preview audio for a batch
-  - one-click save approved references
+- 保留批量预览流程：
+  - 分页加载列表
+  - 批量生成预览音频
+  - 一键保存通过筛选的参考音频
 
-## Model directories
+## 模型目录
 
-Put your weights in any of the following directories:
+请将权重放入以下任意目录：
 
-- SoVITS (`.pth`)
+- SoVITS（`.pth`）
   - `SoVITS_weights`
   - `SoVITS_weights_v2`
   - `SoVITS_weights_v2Pro`
   - `SoVITS_weights_v2ProPlus`
   - `SoVITS_weights_v3`
   - `SoVITS_weights_v4`
-- GPT (`.ckpt`)
+- GPT（`.ckpt`）
   - `GPT_weights`
   - `GPT_weights_v2`
   - `GPT_weights_v2Pro`
@@ -36,39 +38,52 @@ Put your weights in any of the following directories:
   - `GPT_weights_v3`
   - `GPT_weights_v4`
 
-## Runtime dependencies
+## 运行依赖
 
-Use the synced upstream dependency files:
+使用与上游同步的依赖文件：
 
 - `requirements.txt`
-- `extra-req.txt` (optional)
+- `extra-req.txt`（可选）
 
-Note: this project assumes GPT-SoVITS related pretrained assets (for example BERT/CN-HuBERT) are available under `GPT_SoVITS/pretrained_models`.
+请先根据你的运行环境安装 PyTorch，再安装其余依赖：
 
-## Run
+```powershell
+# NVIDIA GPU（CUDA 12.1）
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# 仅 CPU
+# pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+pip install -r requirements.txt
+pip install -r extra-req.txt
+```
+
+说明：本项目需要自行准备 GPT-SoVITS 相关预训练资源，并放在 `GPT_SoVITS/pretrained_models` 下。
+
+## 启动方式
 
 ```powershell
 python webui.py -l ref.list -f <ref_audio_folder> -b 10
 ```
 
-Arguments:
+参数说明：
 
-- `-l`, `--list`: reference list file (default: `ref.list`)
-- `-p`, `--port`: WebUI port (default: `14285`)
-- `-f`, `--folder`: optional base folder for reference audios in list file
-- `-b`, `--batch`: page batch size
-- `-cd`, `--check_duration`: filter refs outside 3-10 seconds
-- `-r`, `--random_order`: randomize reference list order
+- `-l`, `--list`：参考列表文件（默认：`ref.list`）
+- `-p`, `--port`：WebUI 端口（默认：`14285`）
+- `-f`, `--folder`：列表文件中参考音频路径的可选基目录
+- `-b`, `--batch`：分页批大小
+- `-cd`, `--check_duration`：过滤不在 3-10 秒范围内的参考音频
+- `-r`, `--random_order`：随机打乱参考列表顺序
 
-Reference list format:
+参考列表格式：
 
 ```text
 <wav_path_or_name>|<speaker>|<language>|<prompt_text>
 ```
 
-Legacy language values in list files such as `ZH/JP/EN` are automatically normalized.
+列表中的旧语言标记（如 `ZH/JP/EN`）会自动规范化。
 
-## New synthesis controls in WebUI
+## WebUI 新增合成控制项
 
 - `top_k`
 - `top_p`
@@ -76,11 +91,11 @@ Legacy language values in list files such as `ZH/JP/EN` are automatically normal
 - `speed_factor`
 - `repetition_penalty`
 - `seed`
-- `sample_steps` (visible for `v3`)
-- `super_sampling` (visible for `v3`)
+- `sample_steps`（`v3` 可见）
+- `super_sampling`（`v3` 可见）
 
-## Notes
+## 注意事项
 
-- For `v3/v4` models, empty prompt text may fail for that row.
-- If one row fails in a batch, other rows continue.
-- The WebUI dynamically updates synthesis language choices according to loaded SoVITS version.
+- 对于 `v3/v4` 模型，若某行提示文本为空，可能会导致该行失败。
+- 若批处理中某一行失败，其它行仍会继续执行。
+- WebUI 会根据已加载的 SoVITS 版本动态更新可选合成语言。

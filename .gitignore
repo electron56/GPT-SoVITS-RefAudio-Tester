@@ -1,1 +1,14 @@
 ex/*
+ref_mp3/*
+*.list
+
+# IDE/editor settings
+.idea/
+.vscode/
+
+# Python cache artifacts
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
