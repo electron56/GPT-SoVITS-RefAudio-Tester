@@ -102,3 +102,8 @@ python webui.py -l ref.list -f <ref_audio_folder> -b 10
 - `v3/v4` モデルでは、行のプロンプトテキストが空の場合、その行が失敗する可能性があります。
 - バッチ内の 1 行が失敗しても、他の行は継続します。
 - WebUI は、読み込まれた SoVITS バージョンに応じて選択可能な合成言語を動的に更新します。
+
+## 2026-03 Update
+- `-b` / `--batch` is now the initial batch size. You can change it in WebUI (`1-100`).
+- The second list column `speaker` is read and can be switched in frontend to filter rows.
+- Empty `speaker` is grouped as `Unlabeled`.

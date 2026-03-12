@@ -72,7 +72,7 @@ Arguments:
 - `-l`, `--list`: reference list file (default: `ref.list`)
 - `-p`, `--port`: WebUI port (default: `14285`)
 - `-f`, `--folder`: optional base folder for reference audios in list file
-- `-b`, `--batch`: page batch size
+- `-b`, `--batch`: initial batch size (UI can adjust to `1-100` after launch)
 - `-cd`, `--check_duration`: filter refs outside 3-10 seconds
 - `-r`, `--random_order`: randomize reference list order
 
@@ -83,11 +83,15 @@ Reference list format:
 ```
 
 Legacy language values in list files such as `ZH/JP/EN` are automatically normalized.
+The second column `speaker` is now read and used by the frontend filter.
+Empty `speaker` values are grouped as `Unlabeled`.
 
 ## New synthesis controls in WebUI
 
 - UI language switching: Chinese / Japanese / English
 - The "Synthesis Language" dropdown displays localized labels based on UI language (inference values stay unchanged).
+- Frontend batch size can be changed dynamically (`1-100`).
+- Frontend speaker switching filters the preview list by `speaker`.
 - `top_k`
 - `top_p`
 - `temperature`

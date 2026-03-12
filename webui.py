@@ -59,15 +59,22 @@ LEGACY_REF_LANGUAGE_ALIASES = {
     "ko": "Korean",
 }
 
+MAX_PREVIEW_ROWS = 100
+ALL_SPEAKERS_VALUE = "__SPEAKER_FILTER_ALL__"
+UNLABELED_SPEAKER_VALUE = "__SPEAKER_UNLABELED__"
+
 # Runtime state
 SoVITS_weight_root = "SoVITS_weights"
 GPT_weight_root = "GPT_weights"
 g_ref_folder = ""
 g_batch = 10
 g_index = 0
+g_ref_list_all: List[Dict[str, str]] = []
 g_ref_list: List[Dict[str, str]] = []
 g_ref_list_max_index = 0
-g_ref_audio_path_list: List[Optional[str]] = []
+g_speaker_order: List[str] = []
+g_current_speaker = ALL_SPEAKERS_VALUE
+g_ref_audio_path_list: List[Optional[str]] = [None for _ in range(MAX_PREVIEW_ROWS)]
 g_SoVITS_names: List[str] = []
 g_GPT_names: List[str] = []
 g_ui_language = "zh"
@@ -95,6 +102,9 @@ UI_TEXTS = {
         "batch_preview": "## 试听批次",
         "start_index": "起始索引",
         "batch_size": "每批数量",
+        "speaker_filter": "说话人筛选",
+        "all_speakers": "全部",
+        "unlabeled_speaker": "未标注",
         "prev_batch": "上一批",
         "next_batch": "下一批",
         "generate_preview": "生成试听语音",
@@ -148,6 +158,9 @@ UI_TEXTS = {
         "batch_preview": "## 試聴バッチ",
         "start_index": "開始インデックス",
         "batch_size": "バッチ件数",
+        "speaker_filter": "話者フィルター",
+        "all_speakers": "すべて",
+        "unlabeled_speaker": "未設定",
         "prev_batch": "前のバッチ",
         "next_batch": "次のバッチ",
         "generate_preview": "試聴音声を生成",
@@ -201,6 +214,9 @@ UI_TEXTS = {
         "batch_preview": "## Audition Batch",
         "start_index": "Start Index",
         "batch_size": "Items Per Batch",
+        "speaker_filter": "Speaker Filter",
+        "all_speakers": "All",
+        "unlabeled_speaker": "Unlabeled",
         "prev_batch": "Previous Batch",
         "next_batch": "Next Batch",
         "generate_preview": "Generate Audition Audio",
@@ -536,6 +552,82 @@ def get_synthesis_language_choices(languages: List[str], ui_lang: Optional[str] 
     return [(_translate_synthesis_language(label, ui_lang), label) for label in languages]
 
 
+def _normalize_batch_size(raw_batch: int) -> int:
+    try:
+        batch = int(raw_batch)
+    except (TypeError, ValueError):
+        batch = 1
+    return max(1, min(batch, MAX_PREVIEW_ROWS))
+
+
+def _normalize_start_index(raw_index: int) -> int:
+    try:
+        index = int(raw_index)
+    except (TypeError, ValueError):
+        index = 0
+    return max(0, min(index, g_ref_list_max_index))
+
+
+def _normalize_speaker(raw_speaker: Optional[str]) -> str:
+    speaker = str(raw_speaker or "").strip()
+    return speaker if speaker else UNLABELED_SPEAKER_VALUE
+
+
+def _refresh_speaker_order() -> None:
+    global g_speaker_order
+    seen = set()
+    order = []
+    for item in g_ref_list_all:
+        speaker = item.get("speaker", UNLABELED_SPEAKER_VALUE)
+        if speaker in seen:
+            continue
+        seen.add(speaker)
+        order.append(speaker)
+    g_speaker_order = order
+
+
+def _format_speaker_label(speaker: str, lang: Optional[str] = None) -> str:
+    if speaker == ALL_SPEAKERS_VALUE:
+        return t("all_speakers", lang)
+    if speaker == UNLABELED_SPEAKER_VALUE:
+        return t("unlabeled_speaker", lang)
+    return speaker
+
+
+def get_speaker_filter_choices(lang: Optional[str] = None):
+    choices = [(_format_speaker_label(ALL_SPEAKERS_VALUE, lang), ALL_SPEAKERS_VALUE)]
+    choices.extend([(_format_speaker_label(speaker, lang), speaker) for speaker in g_speaker_order])
+    return choices
+
+
+def apply_speaker_filter(speaker: Optional[str] = None) -> str:
+    global g_ref_list, g_ref_list_max_index, g_current_speaker, g_index
+
+    selected = speaker if speaker is not None else g_current_speaker
+    if selected != ALL_SPEAKERS_VALUE and selected not in g_speaker_order:
+        selected = ALL_SPEAKERS_VALUE
+
+    g_current_speaker = selected
+    if selected == ALL_SPEAKERS_VALUE:
+        g_ref_list = list(g_ref_list_all)
+    else:
+        g_ref_list = [item for item in g_ref_list_all if item.get("speaker") == selected]
+
+    g_ref_list_max_index = max(len(g_ref_list) - 1, 0)
+    g_index = _normalize_start_index(g_index)
+    return g_current_speaker
+
+
+def _build_start_index_update(index: int, batch: int):
+    return {
+        "__type__": "update",
+        "minimum": 0,
+        "maximum": g_ref_list_max_index,
+        "step": max(batch, 1),
+        "value": index,
+    }
+
+
 def check_audio_duration(path: str) -> bool:
     try:
         wav16k, _ = librosa.load(path, sr=16000)
@@ -546,18 +638,19 @@ def check_audio_duration(path: str) -> bool:
 
 
 def remove_noncompliant_audio_from_list() -> None:
-    global g_ref_list, g_ref_list_max_index
+    global g_ref_list_all
     print("Checking audio duration ...")
     filtered = []
-    for item in tqdm(g_ref_list):
+    for item in tqdm(g_ref_list_all):
         if check_audio_duration(item["path"]):
             filtered.append(item)
-    g_ref_list = filtered
-    g_ref_list_max_index = max(len(g_ref_list) - 1, 0)
+    g_ref_list_all = filtered
+    _refresh_speaker_order()
+    apply_speaker_filter(g_current_speaker)
 
 
 def load_ref_list_file(path: str) -> None:
-    global g_ref_list, g_ref_list_max_index
+    global g_ref_list_all
     records: List[Dict[str, str]] = []
 
     with open(path, "r", encoding="utf-8") as handle:
@@ -570,17 +663,20 @@ def load_ref_list_file(path: str) -> None:
             audio_path = row[0].strip()
             if g_ref_folder:
                 audio_path = os.path.join(g_ref_folder, os.path.basename(audio_path))
+            speaker = _normalize_speaker(row[1])
 
             records.append(
                 {
                     "path": audio_path,
+                    "speaker": speaker,
                     "lang": row[2].strip(),
                     "text": row[3].strip(),
                 }
             )
 
-    g_ref_list = records
-    g_ref_list_max_index = max(len(g_ref_list) - 1, 0)
+    g_ref_list_all = records
+    _refresh_speaker_order()
+    apply_speaker_filter(ALL_SPEAKERS_VALUE)
 
 
 def get_gradio_allowed_paths() -> List[str]:
@@ -588,7 +684,7 @@ def get_gradio_allowed_paths() -> List[str]:
     if g_ref_folder:
         allowed.add(os.path.abspath(g_ref_folder))
 
-    for item in g_ref_list:
+    for item in g_ref_list_all:
         ref_path = item.get("path")
         if not ref_path:
             continue
@@ -645,86 +741,83 @@ def _normalize_ref_language(raw_language: Optional[str]) -> str:
 
 def reload_data(index: int, batch: int):
     global g_index, g_batch
-    g_index = index
-    g_batch = batch
-    return g_ref_list[index:index + batch]
+    g_batch = _normalize_batch_size(batch)
+    g_index = _normalize_start_index(index)
+    return g_ref_list[g_index:g_index + g_batch]
 
 
 def change_index(index: int, batch: int):
-    global g_index, g_batch, g_ref_audio_path_list
-
-    g_ref_audio_path_list = []
-    g_index, g_batch = index, batch
+    global g_ref_audio_path_list
     datas = reload_data(index, batch)
+    g_ref_audio_path_list = [None for _ in range(MAX_PREVIEW_ROWS)]
 
     output = []
+    data_size = len(datas)
 
     # Reference audio widgets
-    for item in datas:
-        output.append(
-            {
-                "__type__": "update",
-                "label": f"{t('ref_audio')} {os.path.basename(item['path'])}",
-                "value": item["path"],
-            }
-        )
-        g_ref_audio_path_list.append(item["path"])
-
-    for _ in range(g_batch - len(datas)):
-        output.append(
-            {
-                "__type__": "update",
-                "label": t("ref_audio"),
-                "value": None,
-            }
-        )
-        g_ref_audio_path_list.append(None)
+    for i in range(MAX_PREVIEW_ROWS):
+        if i < data_size:
+            item = datas[i]
+            output.append(
+                {
+                    "__type__": "update",
+                    "label": f"{t('ref_audio')} {os.path.basename(item['path'])}",
+                    "value": item["path"],
+                }
+            )
+            g_ref_audio_path_list[i] = item["path"]
+        else:
+            output.append(
+                {
+                    "__type__": "update",
+                    "label": t("ref_audio"),
+                    "value": None,
+                }
+            )
 
     # Reference language widgets
-    for item in datas:
-        output.append(_normalize_ref_language(item["lang"]))
-    for _ in range(g_batch - len(datas)):
-        output.append(None)
+    for i in range(MAX_PREVIEW_ROWS):
+        output.append(_normalize_ref_language(datas[i]["lang"]) if i < data_size else None)
 
     # Reference text widgets
-    for item in datas:
-        output.append(item["text"])
-    for _ in range(g_batch - len(datas)):
-        output.append(None)
+    for i in range(MAX_PREVIEW_ROWS):
+        output.append(datas[i]["text"] if i < data_size else None)
 
     # Test audio widgets
-    for _ in range(g_batch):
+    for _ in range(MAX_PREVIEW_ROWS):
         output.append(None)
 
     # Save buttons
-    for _ in datas:
-        output.append({"__type__": "update", "value": t("save"), "interactive": True})
-    for _ in range(g_batch - len(datas)):
-        output.append({"__type__": "update", "value": t("save"), "interactive": False})
+    for i in range(MAX_PREVIEW_ROWS):
+        output.append({"__type__": "update", "value": t("save"), "interactive": i < data_size})
 
     # Preview row visibility, hide rows without data to avoid blank gaps.
-    for _ in datas:
-        output.append({"__type__": "update", "visible": True})
-    for _ in range(g_batch - len(datas)):
-        output.append({"__type__": "update", "visible": False})
+    for i in range(MAX_PREVIEW_ROWS):
+        output.append({"__type__": "update", "visible": i < data_size})
 
-    return output
+    return _build_start_index_update(g_index, g_batch), *output
 
 
 def previous_index(index: int, batch: int):
-    if (index - batch) >= 0:
-        new_index = index - batch
-    else:
-        new_index = 0
-    return new_index, *change_index(new_index, batch)
+    batch = _normalize_batch_size(batch)
+    index = _normalize_start_index(index)
+    new_index = max(index - batch, 0)
+    return change_index(new_index, batch)
 
 
 def next_index(index: int, batch: int):
+    batch = _normalize_batch_size(batch)
+    index = _normalize_start_index(index)
     if (index + batch) <= g_ref_list_max_index:
         new_index = index + batch
     else:
         new_index = index
-    return new_index, *change_index(new_index, batch)
+    return change_index(new_index, batch)
+
+
+def change_speaker_filter(speaker: str, batch: int):
+    apply_speaker_filter(speaker)
+    return change_index(0, batch)
 
 
 def copy_proved_ref_audio(index: int, text: str, out_dir: str):
@@ -912,18 +1005,22 @@ def generate_test_audio(
     output = []
 
     if not test_text or not test_text.strip():
-        return [None for _ in range(g_batch)]
+        return [None for _ in range(MAX_PREVIEW_ROWS)]
 
     cut_mode = CUT_METHOD_VALUE_BY_ID.get(cut_method_id, 0)
 
-    for i in range(g_batch):
-        ref_audio_path = g_ref_audio_path_list[i]
+    for i in range(MAX_PREVIEW_ROWS):
+        if i >= g_batch:
+            output.append(None)
+            continue
+
+        ref_audio_path = g_ref_audio_path_list[i] if i < len(g_ref_audio_path_list) else None
         if not ref_audio_path:
             output.append(None)
             continue
 
         ref_lang = widgets[i]
-        ref_text = widgets[i + g_batch]
+        ref_text = widgets[i + MAX_PREVIEW_ROWS]
 
         try:
             generated = inference_main.get_tts_wav(
@@ -951,8 +1048,13 @@ def generate_test_audio(
     return output
 
 
-def change_ui_language(ui_lang: str, current_cut_method: str, current_text_language: str):
-    global g_ui_language
+def change_ui_language(
+    ui_lang: str,
+    current_cut_method: str,
+    current_text_language: str,
+    current_speaker: str,
+):
+    global g_ui_language, g_current_speaker
     if ui_lang not in UI_TEXTS:
         ui_lang = "en"
     g_ui_language = ui_lang
@@ -967,6 +1069,10 @@ def change_ui_language(ui_lang: str, current_cut_method: str, current_text_langu
         if current_text_language in supported_languages
         else (supported_languages[0] if supported_languages else None)
     )
+    speaker_value = current_speaker or g_current_speaker
+    if speaker_value != ALL_SPEAKERS_VALUE and speaker_value not in g_speaker_order:
+        speaker_value = ALL_SPEAKERS_VALUE
+    g_current_speaker = speaker_value
 
     output = [
         t("title", ui_lang),
@@ -991,28 +1097,41 @@ def change_ui_language(ui_lang: str, current_cut_method: str, current_text_langu
         {"__type__": "update", "label": t("sample_steps_v3", ui_lang)},
         {"__type__": "update", "label": t("super_sampling_v3", ui_lang)},
         t("batch_preview", ui_lang),
-        {"__type__": "update", "label": t("start_index", ui_lang)},
+        {
+            "__type__": "update",
+            "label": t("start_index", ui_lang),
+            "minimum": 0,
+            "maximum": g_ref_list_max_index,
+            "step": max(g_batch, 1),
+            "value": g_index,
+        },
         {"__type__": "update", "label": t("batch_size", ui_lang)},
+        {
+            "__type__": "update",
+            "label": t("speaker_filter", ui_lang),
+            "choices": get_speaker_filter_choices(ui_lang),
+            "value": speaker_value,
+        },
         {"__type__": "update", "value": t("prev_batch", ui_lang)},
         {"__type__": "update", "value": t("next_batch", ui_lang)},
         {"__type__": "update", "value": t("generate_preview", ui_lang)},
         t("preview_list", ui_lang),
     ]
 
-    for i in range(g_batch):
+    for i in range(MAX_PREVIEW_ROWS):
         ref_audio_path = g_ref_audio_path_list[i] if i < len(g_ref_audio_path_list) else None
         label = t("ref_audio", ui_lang)
         if ref_audio_path:
             label = f"{label} {os.path.basename(ref_audio_path)}"
         output.append({"__type__": "update", "label": label})
 
-    for _ in range(g_batch):
+    for _ in range(MAX_PREVIEW_ROWS):
         output.append({"__type__": "update", "label": t("ref_language", ui_lang)})
-    for _ in range(g_batch):
+    for _ in range(MAX_PREVIEW_ROWS):
         output.append({"__type__": "update", "label": t("ref_text", ui_lang)})
-    for _ in range(g_batch):
+    for _ in range(MAX_PREVIEW_ROWS):
         output.append({"__type__": "update", "label": t("generated", ui_lang)})
-    for _ in range(g_batch):
+    for _ in range(MAX_PREVIEW_ROWS):
         output.append({"__type__": "update", "value": t("save", ui_lang)})
 
     return output
@@ -1029,7 +1148,13 @@ if __name__ == "__main__":
         default="",
         help="Optional folder for reference audio; basename in list will be joined to this folder.",
     )
-    parser.add_argument("-b", "--batch", type=int, default=10, help="Batch size per page")
+    parser.add_argument(
+        "-b",
+        "--batch",
+        type=int,
+        default=10,
+        help="Initial batch size per page (1-100, adjustable in UI).",
+    )
     parser.add_argument(
         "-cd",
         "--check_duration",
@@ -1054,7 +1179,7 @@ if __name__ == "__main__":
     g_preview_row_widget_list = []
 
     g_ref_folder = args.folder
-    g_batch = args.batch
+    g_batch = _normalize_batch_size(args.batch)
 
     load_ref_list_file(args.list)
 
@@ -1062,7 +1187,8 @@ if __name__ == "__main__":
         remove_noncompliant_audio_from_list()
 
     if args.random_order:
-        random.shuffle(g_ref_list)
+        random.shuffle(g_ref_list_all)
+        apply_speaker_filter(g_current_speaker)
 
     g_SoVITS_names, g_GPT_names = get_weights_names()
 
@@ -1248,11 +1374,18 @@ if __name__ == "__main__":
                             )
                             sliderBatchSize = gr.Slider(
                                 minimum=1,
-                                maximum=100,
+                                maximum=MAX_PREVIEW_ROWS,
                                 step=1,
                                 label=t("batch_size"),
                                 value=g_batch,
-                                interactive=False,
+                                interactive=True,
+                                scale=3,
+                            )
+                            dropdownSpeaker = gr.Dropdown(
+                                label=t("speaker_filter"),
+                                choices=get_speaker_filter_choices(),
+                                value=g_current_speaker,
+                                interactive=True,
                                 scale=3,
                             )
 
@@ -1278,7 +1411,7 @@ if __name__ == "__main__":
             with gr.Group(elem_classes=["section-panel", "preview-section"]):
                 mdPreviewList = gr.Markdown(t("preview_list"), elem_classes=["section-heading"])
                 with gr.Column(elem_classes=["preview-list-shell"]):
-                    for i in range(g_batch):
+                    for i in range(MAX_PREVIEW_ROWS):
                         with gr.Row(elem_classes=["preview-item"], equal_height=True) as preview_row:
                             ref_no = gr.Number(value=i, visible=False)
                             ref_audio = gr.Audio(
@@ -1363,9 +1496,19 @@ if __name__ == "__main__":
                 ],
             )
 
+            batch_view_outputs = [
+                sliderStartIndex,
+                *g_ref_audio_widget_list,
+                *g_ref_lang_widget_list,
+                *g_ref_text_widget_list,
+                *g_test_audio_widget_list,
+                *g_save_widget_list,
+                *g_preview_row_widget_list,
+            ]
+
             dropdownUILanguage.change(
                 change_ui_language,
-                inputs=[dropdownUILanguage, dropdownHowToCut, dropdownTextLanguage],
+                inputs=[dropdownUILanguage, dropdownHowToCut, dropdownTextLanguage, dropdownSpeaker],
                 outputs=[
                     mdTitle,
                     mdSubtitle,
@@ -1386,6 +1529,7 @@ if __name__ == "__main__":
                     mdBatchPreview,
                     sliderStartIndex,
                     sliderBatchSize,
+                    dropdownSpeaker,
                     btnPreBatch,
                     btnNextBatch,
                     btnInference,
@@ -1401,42 +1545,31 @@ if __name__ == "__main__":
             sliderStartIndex.change(
                 change_index,
                 inputs=[sliderStartIndex, sliderBatchSize],
-                outputs=[
-                    *g_ref_audio_widget_list,
-                    *g_ref_lang_widget_list,
-                    *g_ref_text_widget_list,
-                    *g_test_audio_widget_list,
-                    *g_save_widget_list,
-                    *g_preview_row_widget_list,
-                ],
+                outputs=batch_view_outputs,
+            )
+
+            sliderBatchSize.change(
+                change_index,
+                inputs=[sliderStartIndex, sliderBatchSize],
+                outputs=batch_view_outputs,
+            )
+
+            dropdownSpeaker.change(
+                change_speaker_filter,
+                inputs=[dropdownSpeaker, sliderBatchSize],
+                outputs=batch_view_outputs,
             )
 
             btnPreBatch.click(
                 previous_index,
                 inputs=[sliderStartIndex, sliderBatchSize],
-                outputs=[
-                    sliderStartIndex,
-                    *g_ref_audio_widget_list,
-                    *g_ref_lang_widget_list,
-                    *g_ref_text_widget_list,
-                    *g_test_audio_widget_list,
-                    *g_save_widget_list,
-                    *g_preview_row_widget_list,
-                ],
+                outputs=batch_view_outputs,
             )
 
             btnNextBatch.click(
                 next_index,
                 inputs=[sliderStartIndex, sliderBatchSize],
-                outputs=[
-                    sliderStartIndex,
-                    *g_ref_audio_widget_list,
-                    *g_ref_lang_widget_list,
-                    *g_ref_text_widget_list,
-                    *g_test_audio_widget_list,
-                    *g_save_widget_list,
-                    *g_preview_row_widget_list,
-                ],
+                outputs=batch_view_outputs,
             )
 
             btnInference.click(
@@ -1462,14 +1595,7 @@ if __name__ == "__main__":
             app.load(
                 change_index,
                 inputs=[sliderStartIndex, sliderBatchSize],
-                outputs=[
-                    *g_ref_audio_widget_list,
-                    *g_ref_lang_widget_list,
-                    *g_ref_text_widget_list,
-                    *g_test_audio_widget_list,
-                    *g_save_widget_list,
-                    *g_preview_row_widget_list,
-                ],
+                outputs=batch_view_outputs,
             )
 
     app.launch(

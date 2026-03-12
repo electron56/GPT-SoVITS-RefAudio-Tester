@@ -72,7 +72,7 @@ python webui.py -l ref.list -f <ref_audio_folder> -b 10
 - `-l`, `--list`：参考列表文件（默认：`ref.list`）
 - `-p`, `--port`：WebUI 端口（默认：`14285`）
 - `-f`, `--folder`：列表文件中参考音频路径的可选基目录
-- `-b`, `--batch`：分页批大小
+- `-b`, `--batch`：初始每批数量（启动后可在前端调整为 1-100）
 - `-cd`, `--check_duration`：过滤不在 3-10 秒范围内的参考音频
 - `-r`, `--random_order`：随机打乱参考列表顺序
 
@@ -83,11 +83,15 @@ python webui.py -l ref.list -f <ref_audio_folder> -b 10
 ```
 
 列表中的旧语言标记（如 `ZH/JP/EN`）会自动规范化。
+列表第二列 `speaker` 会被读取，并用于前端筛选。
+若 `speaker` 为空，会归类为“未标注”。
 
 ## WebUI 新增合成控制项
 
 - 支持界面语言切换：中文 / 日本語 / English
 - “合成语言”下拉框会随界面语言显示本地化名称（实际推理值保持不变）
+- 支持前端动态调整“每批数量”（`1-100`）
+- 支持前端按 `speaker` 切换筛选试听列表
 - `top_k`
 - `top_p`
 - `temperature`
