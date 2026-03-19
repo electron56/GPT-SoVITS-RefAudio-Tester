@@ -12,4 +12,13 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+GPT_SoVITS/text/*cache.pickle
+
+# Local imported extras not used by RefAudio Tester core
+GPT_SoVITS/AR/models/t2s_model0.py
+GPT_SoVITS/export_torch_script_v3.py
+GPT_SoVITS/inference_main_v2compat.py
+GPT_SoVITS/requirements.txt
+GPT_SoVITS/BigVGAN/demo/
+GPT_SoVITS/BigVGAN/filelists/LibriTTS/
 test_gradio.py
